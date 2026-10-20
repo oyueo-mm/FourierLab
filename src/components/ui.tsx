@@ -1,5 +1,5 @@
 // Small shared UI primitives.
-import { useId, type ButtonHTMLAttributes, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 
@@ -31,8 +31,9 @@ export function IconButton({
   active,
   className,
   children,
+  large,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean; large?: boolean }) {
   return (
     <button
       type="button"
@@ -40,7 +41,9 @@ export function IconButton({
       title={label}
       aria-pressed={active}
       className={cx(
-        'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors',
+        'inline-flex shrink-0 items-center justify-center rounded-lg border transition-colors',
+        // 44 px touch targets on phones/tablets, compact on desktop (large keeps 44 px everywhere).
+        large ? 'h-11 w-11' : 'h-11 w-11 sm:h-9 sm:w-9',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-35',
         active ? 'border-accent bg-accent-soft text-accent' : 'border-line bg-white text-slate-600 hover:bg-slate-50 hover:text-ink',
         className,
@@ -79,7 +82,7 @@ export function Segmented<T extends string | number>({
             onClick={() => onChange(o.value)}
             className={cx(
               'flex-1 rounded-md font-medium whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-accent',
-              size === 'sm' ? 'px-2 py-1 text-xs' : 'px-2.5 py-1.5 text-sm',
+              size === 'sm' ? 'px-2 py-2 text-xs sm:py-1' : 'px-2.5 py-2.5 text-sm sm:py-1.5',
               on ? 'bg-white text-accent shadow-sm ring-1 ring-line' : 'text-slate-600 hover:text-ink',
             )}
           >
@@ -108,7 +111,7 @@ export function Chip({
       aria-pressed={on}
       onClick={onToggle}
       className={cx(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+        'inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors sm:min-h-0 sm:px-2.5',
         'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent',
         on ? 'border-accent/40 bg-accent-soft text-accent' : 'border-line bg-white text-slate-500 hover:text-ink',
       )}
@@ -119,7 +122,14 @@ export function Chip({
   );
 }
 
-/** Range slider that also paints its filled part. `value` is in slider units. */
+/**
+ * Range slider that also paints its filled part. `value` is in slider units.
+ *
+ * `onChange` reports every value while the thumb moves (use it for a live preview).
+ * `onCommit` reports the final value once: when the pointer is released (or cancelled) after a
+ * drag, or immediately for changes that do not come from a pointer drag (keyboard, assistive
+ * technology, programmatic input). Without `onCommit` it behaves like a plain range input.
+ */
 export function Slider({
   label,
   min,
@@ -127,9 +137,10 @@ export function Slider({
   step,
   value,
   onChange,
+  onCommit,
   className,
   valueText,
-  ...rest
+  testId,
 }: {
   label: string;
   min: number;
@@ -137,25 +148,58 @@ export function Slider({
   step: number;
   value: number;
   onChange: (v: number) => void;
+  onCommit?: (v: number) => void;
   className?: string;
   valueText?: string;
-  onPointerDown?: () => void;
-  onPointerUp?: () => void;
+  testId?: string;
 }) {
+  const dragging = useRef(false);
+  const dirty = useRef(false);
+  const latest = useRef(value);
+  const commitRef = useRef(onCommit);
+  commitRef.current = onCommit;
+
+  useEffect(() => {
+    const end = () => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      if (dirty.current) {
+        dirty.current = false;
+        commitRef.current?.(latest.current);
+      }
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    return () => {
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+    };
+  }, []);
+
   const fill = `${((value - min) / (max - min || 1)) * 100}%`;
   return (
     <input
       type="range"
       aria-label={label}
       aria-valuetext={valueText}
+      data-testid={testId}
       className={cx('slider w-full', className)}
       min={min}
       max={max}
       step={step}
       value={value}
       style={{ '--fill': fill } as CSSProperties}
-      onChange={(e) => onChange(Number(e.currentTarget.value))}
-      {...rest}
+      onPointerDown={() => {
+        dragging.current = true;
+        dirty.current = false;
+      }}
+      onChange={(e) => {
+        const v = Number(e.currentTarget.value);
+        latest.current = v;
+        onChange(v);
+        if (dragging.current) dirty.current = true;
+        else commitRef.current?.(v);
+      }}
     />
   );
 }

@@ -30,6 +30,8 @@ const browserScheduler: Scheduler = {
 
 export class Player {
   private progress = 0;
+  /** Number of `restart()` calls so far (diagnostics for the browser tests). */
+  restarts = 0;
   private state: PlayerState;
   private frameId: number | null = null;
   private lastTime: number | null = null;
@@ -98,6 +100,17 @@ export class Player {
 
   setLoop(loop: boolean) {
     this.setState({ loop });
+  }
+
+  /**
+   * Back to the first frame because the thing being drawn changed (circle count, selection
+   * mode, a new drawing). Keeps the play state: a running player continues from t = 0, a paused
+   * one stays paused on the new first frame, and a finished one-shot run is re-armed.
+   */
+  restart() {
+    this.restarts++;
+    this.lastTime = null;
+    this.seek(0);
   }
 
   /** Jumps to progress p (clamped to [0, 1]) without changing play state. */

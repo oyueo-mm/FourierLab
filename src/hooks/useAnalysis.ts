@@ -5,6 +5,7 @@
 //                                                       └─► error curves (Parseval, both modes)
 
 import { useMemo } from 'react';
+import { counters } from '../core/debug';
 import type { LabSettings } from '../core/settings';
 import { compileChain, type CompiledChain } from '../math/epicycles';
 import { computeSpectrum, type Coefficient, type Spectrum } from '../math/fourier';
@@ -33,10 +34,14 @@ export type AnalysisResult = { ok: true; analysis: Analysis } | { ok: false; err
 export function useAnalysis(stroke: readonly Vec2[], settings: LabSettings): AnalysisResult {
   const { pathMode, sampleCount, selectionMode, circleCount, chainOrder } = settings;
 
-  const prepared = useMemo(() => preparePath(stroke, pathMode, sampleCount), [stroke, pathMode, sampleCount]);
+  const prepared = useMemo(() => {
+    counters.prepare++;
+    return preparePath(stroke, pathMode, sampleCount);
+  }, [stroke, pathMode, sampleCount]);
 
   const base = useMemo(() => {
     if (!prepared.ok) return null;
+    counters.spectrum++;
     const spectrum = computeSpectrum(prepared.path.samples);
     const ranked = { frequency: rankComponents(spectrum, 'frequency'), amplitude: rankComponents(spectrum, 'amplitude') };
     const errors = { frequency: errorCurve(ranked.frequency), amplitude: errorCurve(ranked.amplitude) };

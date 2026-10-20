@@ -9,7 +9,7 @@ import { preparePath } from '../math/path';
 import { PRESETS } from '../math/presets';
 import { curveResolution, evaluateSeries } from '../math/reconstruct';
 import { rankComponents, selectComponents } from '../math/selection';
-import { drawDynamicLayer, hitTest, joinSegment, type Frame, type SceneData } from './scene';
+import { drawDynamicLayer, hitTest, joinSegment, sceneBounds, type Frame, type SceneData } from './scene';
 
 type Call = { op: string; args: number[] };
 
@@ -118,5 +118,18 @@ describe('joinSegment', () => {
     expect(joinSegment({ stroke, mode: 'open', endGap: 1 })).not.toBeNull();
     expect(joinSegment({ stroke, mode: 'retrace', endGap: 1 })).toBeNull();
     expect(joinSegment({ stroke, mode: 'closed', endGap: 0 })).toBeNull();
+  });
+});
+
+describe('sceneBounds', () => {
+  it('frames the largest circle only when asked (image exports leave it out)', () => {
+    const scene = heartScene(30);
+    const chain = scene.chain!;
+    const plain = sceneBounds(scene);
+    const framed = sceneBounds(scene, true);
+    expect(framed.length).toBe(plain.length + 2);
+    const top = Math.max(...framed.map((p) => p[1]));
+    expect(top).toBeCloseTo(Math.max(Math.max(...plain.map((p) => p[1])), chain.dcIm + chain.amplitude[0]), 12);
+    expect(sceneBounds({ ...scene, chain: null }, true).length).toBe(plain.length);
   });
 });

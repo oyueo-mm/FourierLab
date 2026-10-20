@@ -91,6 +91,53 @@ describe('Player', () => {
     expect(seen).toHaveLength(3);
   });
 
+  it('restart(): a running player goes back to t = 0 and keeps playing', () => {
+    const sch = manualScheduler();
+    const p = new Player({ speed: 1 }, sch);
+    p.play();
+    sch.frame(0);
+    sch.frame(100);
+    p.seek(0.6);
+    p.restart();
+    expect(p.time).toBe(0);
+    expect(p.getState().playing).toBe(true);
+    expect(p.restarts).toBe(1);
+    // The pre-restart timestamp is forgotten: the next frame starts the clock, it does not jump.
+    sch.frame(5000);
+    expect(p.time).toBe(0);
+    sch.frame(5100);
+    expect(p.time).toBeCloseTo(0.1 / BASE_PERIOD_SECONDS, 12);
+  });
+
+  it('restart(): a paused player stays paused on the first frame and notifies listeners', () => {
+    const p = new Player({}, manualScheduler());
+    const seen: number[] = [];
+    p.onFrame((t) => seen.push(t));
+    p.seek(0.8);
+    p.restart();
+    expect(p.time).toBe(0);
+    expect(p.getState().playing).toBe(false);
+    expect(seen).toEqual([0.8, 0]);
+  });
+
+  it('restart(): a finished one-shot run is re-armed, not stuck at t = 1', () => {
+    const sch = manualScheduler();
+    const p = new Player({ loop: false, speed: 5 }, sch);
+    p.play();
+    p.seek(0.99);
+    p.advance(0.1);
+    expect(p.time).toBe(1);
+    expect(p.getState().playing).toBe(false);
+    p.restart();
+    expect(p.time).toBe(0);
+    expect(p.getState().playing).toBe(false);
+    p.play();
+    expect(p.getState().playing).toBe(true);
+    p.advance(0.05);
+    expect(p.time).toBeGreaterThan(0);
+    expect(p.time).toBeLessThan(0.1);
+  });
+
   it('publishes state changes as new snapshots', () => {
     const p = new Player({}, manualScheduler());
     const a = p.getState();
@@ -144,6 +191,24 @@ describe('view transforms', () => {
       expect(sy).toBeLessThanOrEqual(vp.height);
     }
     expect(fitView(null, vp)).toEqual(DEFAULT_VIEW);
+  });
+
+  it('keeps the reserved right strip free when fitting', () => {
+    const pts: Vec2[] = [
+      [-1, -0.5],
+      [1, 0.5],
+    ];
+    const inset = 60;
+    const v = fitView(boundsOf(pts), vp, 0.05, inset);
+    for (const [x, y] of pts) {
+      const [sx, sy] = worldToScreen(v, vp, x, y);
+      expect(sx).toBeGreaterThanOrEqual(0);
+      expect(sx).toBeLessThanOrEqual(vp.width - inset + 1e-9);
+      expect(sy).toBeGreaterThanOrEqual(0);
+      expect(sy).toBeLessThanOrEqual(vp.height);
+    }
+    // Centred in the usable strip, not in the whole canvas.
+    expect(worldToScreen(v, vp, 0, 0)[0]).toBeCloseTo((vp.width - inset) / 2, 9);
   });
 
   it('maps the drawing canvas to [-1, 1] on its shorter side with y up', () => {

@@ -146,3 +146,16 @@ export const HelpIcon = (p: IconProps) => (
     <circle cx="12" cy="17" r=".6" fill="currentColor" />
   </Icon>
 );
+export const PencilIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19z" />
+    <path d="M14.5 6.5l3 3" />
+  </Icon>
+);
+export const MoreIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="5" cy="12" r="1.2" fill="currentColor" />
+    <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+    <circle cx="19" cy="12" r="1.2" fill="currentColor" />
+  </Icon>
+);

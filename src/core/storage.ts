@@ -2,21 +2,29 @@
 // Stored in the same validated format as project files; any read/write failure (private
 // mode, blocked storage, corrupt data) falls back to the defaults silently.
 
-import type { Vec2 } from '../math/path';
+import type { PathMode, Vec2 } from '../math/path';
 import type { LabSettings } from './settings';
 import { createProject, validateProject, type ProjectFile } from './project';
 
 const KEY = 'fourierlab:autosave:v1';
 
-export interface Autosave {
-  project: ProjectFile;
-  /** A drawn stroke not yet analysed, if any. */
-  draft: Vec2[] | null;
+/** A stroke being edited in the drawer that has not been applied to the animation yet. */
+export interface Draft {
+  points: Vec2[];
+  mode: PathMode;
 }
 
-export function saveAutosave(path: readonly Vec2[], settings: LabSettings, source: string, draft: readonly Vec2[] | null) {
+export interface Autosave {
+  project: ProjectFile;
+  draft: Draft | null;
+}
+
+export function saveAutosave(path: readonly Vec2[], settings: LabSettings, source: string, draft: Draft | null) {
   try {
-    const data = { project: createProject(path, settings, source), draft: draft ? createProject(draft, settings, 'user').path : null };
+    const data = {
+      project: createProject(path, settings, source),
+      draft: draft ? { path: createProject(draft.points, settings, 'user').path, mode: draft.mode } : null,
+    };
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch {
     /* storage unavailable or full: autosave is best-effort */
@@ -30,10 +38,14 @@ export function loadAutosave(): Autosave | null {
     const data = JSON.parse(raw) as { project?: unknown; draft?: unknown };
     const r = validateProject(data.project);
     if (!r.ok) return null;
-    let draft: Vec2[] | null = null;
-    if (Array.isArray(data.draft)) {
-      const d = validateProject({ ...r.project, path: data.draft });
-      if (d.ok) draft = d.project.path;
+    let draft: Draft | null = null;
+    // First release stored the bare point array; later ones store { path, mode }.
+    const d = data.draft;
+    const rawPath = Array.isArray(d) ? d : d && typeof d === 'object' ? (d as { path?: unknown }).path : null;
+    const rawMode = d && typeof d === 'object' && !Array.isArray(d) ? (d as { mode?: unknown }).mode : undefined;
+    if (Array.isArray(rawPath)) {
+      const checked = validateProject({ ...r.project, path: rawPath, settings: { ...r.project.settings, pathMode: rawMode ?? r.project.settings.pathMode } });
+      if (checked.ok) draft = { points: checked.project.path, mode: checked.project.settings.pathMode };
     }
     return { project: r.project, draft };
   } catch {

@@ -76,14 +76,23 @@ export function boundsOf(points: Iterable<Vec2>): Bounds | null {
   return b;
 }
 
-/** View that fits `bounds` with a relative margin. */
-export function fitView(bounds: Bounds | null, vp: Viewport, margin = 0.08): View {
+/**
+ * View that fits `bounds` with a relative margin. `insetRight` reserves a strip on the right
+ * (CSS pixels) that stays empty, e.g. for the zoom buttons floating over the canvas.
+ */
+export function fitView(bounds: Bounds | null, vp: Viewport, margin = 0.08, insetRight = 0): View {
   if (!bounds) return DEFAULT_VIEW;
   const w = Math.max(bounds.maxX - bounds.minX, 1e-6);
   const h = Math.max(bounds.maxY - bounds.minY, 1e-6);
   const base = Math.min(vp.width, vp.height) / (2 * FRAME_HALF);
-  const scale = Math.min(vp.width / w, vp.height / h) * (1 - 2 * margin);
-  return { cx: (bounds.minX + bounds.maxX) / 2, cy: (bounds.minY + bounds.maxY) / 2, zoom: clampZoom(scale / base) };
+  const usableWidth = Math.max(vp.width - insetRight, 1);
+  const scale = Math.min(usableWidth / w, vp.height / h) * (1 - 2 * margin);
+  // The bounds' centre goes to the middle of the usable strip, i.e. insetRight/2 left of the canvas centre.
+  return {
+    cx: (bounds.minX + bounds.maxX) / 2 + insetRight / (2 * scale),
+    cy: (bounds.minY + bounds.maxY) / 2,
+    zoom: clampZoom(scale / base),
+  };
 }
 
 /** Drawing canvas: square-ish frame where the shorter side spans [-1, 1]. */

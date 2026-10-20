@@ -352,11 +352,20 @@ function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: n
   return Math.hypot(px - (ax + u * dx), py - (ay + u * dy));
 }
 
-/** Bounds of everything the animation can reach: the curve plus the full reach of the circles. */
-export function sceneBounds(scene: SceneData): Vec2[] {
+/**
+ * Points whose bounding box frames the scene: the stroke, the reconstruction and the origin.
+ * With `includeCircles` the first (largest, attached to the centre c₀) circle is framed too, so
+ * it is not cut off at the edge of the canvas; image exports leave it out.
+ */
+export function sceneBounds(scene: SceneData, includeCircles = false): Vec2[] {
   const pts: Vec2[] = [];
   if (scene.stroke) pts.push(...scene.stroke);
   if (scene.curve) for (let i = 0; i < scene.curve.x.length; i += 4) pts.push([scene.curve.x[i], scene.curve.y[i]]);
   pts.push([0, 0]);
+  const chain = scene.chain;
+  if (includeCircles && chain && chain.count > 0) {
+    const r = chain.amplitude[0];
+    pts.push([chain.dcRe - r, chain.dcIm - r], [chain.dcRe + r, chain.dcIm + r]);
+  }
   return pts;
 }

@@ -1,6 +1,12 @@
 // The epicycle canvas. Two stacked canvases: a static layer (grid, original, preview) that
 // repaints only when data or view change, and a dynamic layer (trail, circles, tip) that
 // repaints on every player frame. Nothing here causes React re-renders per frame.
+//
+// Gestures (Pointer Events, so mouse, touch and pen share one path):
+//   one pointer  → drag pans, a click without movement selects the circle under it
+//   two pointers → pinch zooms about the midpoint, moving the midpoint pans
+//   wheel        → zoom about the cursor
+// The canvas uses `touch-action: none`; the page scrolls from everywhere else.
 
 import {
   useCallback,
@@ -39,6 +45,13 @@ interface Props {
 
 const CLICK_SLOP_PX = 5;
 
+const zoomText = (z: number) => `×${z < 10 ? z.toFixed(1) : z.toFixed(0)}`;
+
+interface Pt {
+  x: number;
+  y: number;
+}
+
 export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, ref }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const staticRef = useRef<HTMLCanvasElement>(null);
@@ -49,10 +62,12 @@ export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, re
   const jointsRef = useRef<Float64Array>(new Float64Array(0));
   const lastRef = useRef<DynamicResult | null>(null);
   const followRef = useRef(false);
+  // A fit was requested before the canvas had a size (first paint, hidden parent): do it once it has.
+  const needsFitRef = useRef(true);
   const perfRef = useRef({ frames: 0, drawMs: 0, since: performance.now(), fps: 0, avgDrawMs: 0 });
   const statsRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(false);
-  const [zoomLabel, setZoomLabel] = useState(1);
+  const [zoomLabel, setZoomLabel] = useState(zoomText(1));
 
   const frame = useCallback((): Frame => ({ ...sizeRef.current, view: viewRef.current }), []);
 
@@ -94,16 +109,12 @@ export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, re
   );
 
   /** Follow mode: centre the view on the pen tip at time t (before painting). */
-  const applyFollow = useCallback(
-    (t: number) => {
-      if (!followRef.current || !sceneRef.current.chain) return false;
-      const chain = sceneRef.current.chain;
-      const res = tipAt(chain, t, jointsRef);
-      viewRef.current = { ...viewRef.current, cx: res[0], cy: res[1] };
-      return true;
-    },
-    [],
-  );
+  const applyFollow = useCallback((t: number) => {
+    if (!followRef.current || !sceneRef.current.chain) return false;
+    const res = tipAt(sceneRef.current.chain, t, jointsRef);
+    viewRef.current = { ...viewRef.current, cx: res[0], cy: res[1] };
+    return true;
+  }, []);
 
   const paintAll = useCallback(() => {
     applyFollow(player.time);
@@ -114,19 +125,32 @@ export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, re
   const setView = useCallback(
     (v: View) => {
       viewRef.current = v;
-      setZoomLabel(v.zoom);
+      setZoomLabel(zoomText(v.zoom));
       paintAll();
     },
     [paintAll],
   );
 
-  const fit = useCallback(() => {
-    const { width, height } = sizeRef.current;
-    if (!width || !height) return;
+  const stopFollow = useCallback(() => {
     followRef.current = false;
     setFollow(false);
-    setView(fitView(boundsOf(sceneBounds(sceneRef.current)), { width, height }, 0.06));
-  }, [setView]);
+  }, []);
+
+  /** Fits everything the animation can show; returns false while the canvas has no size yet. */
+  const fitNow = useCallback(() => {
+    const { width, height } = sizeRef.current;
+    if (!width || !height) return false;
+    needsFitRef.current = false;
+    stopFollow();
+    // Keep clear of the zoom buttons on the right edge.
+    setView(fitView(boundsOf(sceneBounds(sceneRef.current, true)), { width, height }, 0.06, Math.min(56, width * 0.18)));
+    return true;
+  }, [setView, stopFollow]);
+
+  const fit = useCallback(() => {
+    needsFitRef.current = true;
+    fitNow();
+  }, [fitNow]);
 
   useImperativeHandle(
     ref,
@@ -137,7 +161,8 @@ export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, re
     [fit],
   );
 
-  // Size both canvases to the container (device pixels) and repaint in the same callback.
+  // Size both canvases to the container (device pixels) and repaint in the same callback, so a
+  // resize never leaves a cleared (black/transparent) canvas on screen.
   useLayoutEffect(() => {
     const wrap = wrapRef.current!;
     const ro = new ResizeObserver(([entry]) => {
@@ -149,11 +174,11 @@ export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, re
         c.width = Math.max(1, Math.round(width * dpr));
         c.height = Math.max(1, Math.round(height * dpr));
       }
-      paintAll();
+      if (!(needsFitRef.current && fitNow())) paintAll();
     });
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [paintAll]);
+  }, [paintAll, fitNow]);
 
   // New scene data: repaint both layers once (whether or not the player is running).
   useLayoutEffect(() => {
@@ -161,12 +186,11 @@ export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, re
     paintAll();
   }, [scene, paintAll]);
 
-  // A newly analysed drawing starts from the default framing (same as the drawing canvas).
+  // A newly applied drawing is framed to fit the (now much larger, non-square) canvas.
   useLayoutEffect(() => {
-    followRef.current = false;
-    setFollow(false);
-    setView(DEFAULT_VIEW);
-  }, [fitKey, setView]);
+    needsFitRef.current = true;
+    fitNow();
+  }, [fitKey, fitNow]);
 
   // Player frames → dynamic layer only (plus static when following the tip).
   useEffect(
@@ -209,66 +233,110 @@ export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, re
     return () => el.removeEventListener('wheel', onWheel);
   }, [setView]);
 
-  // Drag to pan; a click without movement selects the circle under the pointer.
-  const dragRef = useRef<{ id: number; x: number; y: number; startX: number; startY: number; moved: boolean } | null>(null);
+  // ── pointer gestures ──
+  const pointers = useRef(new Map<number, Pt>());
+  // `moved` stays true once a drag or pinch happened, so releasing never counts as a click.
+  const gesture = useRef<{ startX: number; startY: number; moved: boolean; pinch: { dist: number; mx: number; my: number } | null } | null>(null);
+
+  const local = (e: { clientX: number; clientY: number }): Pt => {
+    const r = dynamicRef.current!.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  const firstTwo = (): [Pt, Pt] => {
+    const it = pointers.current.values();
+    return [it.next().value as Pt, it.next().value as Pt];
+  };
+
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (dragRef.current || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
-      /* ignore */
+      /* synthetic pointers cannot be captured */
     }
-    dragRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: false };
+    pointers.current.set(e.pointerId, local(e));
+    if (pointers.current.size === 1) {
+      gesture.current = { startX: e.clientX, startY: e.clientY, moved: false, pinch: null };
+    } else if (pointers.current.size === 2 && gesture.current) {
+      const [a, b] = firstTwo();
+      gesture.current.moved = true;
+      gesture.current.pinch = { dist: Math.hypot(b.x - a.x, b.y - a.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    }
   };
+
   const onPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    const d = dragRef.current;
-    if (!d || d.id !== e.pointerId) return;
-    if (!d.moved && Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < CLICK_SLOP_PX) return;
-    if (!d.moved) {
-      d.moved = true;
-      followRef.current = false;
-      setFollow(false);
+    const g = gesture.current;
+    const prev = pointers.current.get(e.pointerId);
+    if (!g || !prev) return;
+    const cur = local(e);
+    pointers.current.set(e.pointerId, cur);
+
+    if (pointers.current.size >= 2 && g.pinch) {
+      const [a, b] = firstTwo();
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const vp = sizeRef.current;
+      let view = viewRef.current;
+      if (g.pinch.dist > 1 && dist > 1) {
+        // Following the pen tip keeps the view centred on it, so zoom about the centre then.
+        const zx = followRef.current ? vp.width / 2 : mx;
+        const zy = followRef.current ? vp.height / 2 : my;
+        view = zoomAt(view, vp, dist / g.pinch.dist, zx, zy);
+      }
+      if (!followRef.current) view = panBy(view, vp, mx - g.pinch.mx, my - g.pinch.my);
+      g.pinch = { dist, mx, my };
+      setView(view);
+      return;
     }
-    const dx = e.clientX - d.x;
-    const dy = e.clientY - d.y;
-    d.x = e.clientX;
-    d.y = e.clientY;
-    setView(panBy(viewRef.current, sizeRef.current, dx, dy));
+
+    if (!g.moved && Math.hypot(e.clientX - g.startX, e.clientY - g.startY) < CLICK_SLOP_PX) return;
+    if (!g.moved) {
+      g.moved = true;
+      stopFollow();
+    }
+    setView(panBy(viewRef.current, sizeRef.current, cur.x - prev.x, cur.y - prev.y));
   };
-  const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    const d = dragRef.current;
-    if (!d || d.id !== e.pointerId) return;
-    dragRef.current = null;
-    if (d.moved) return;
+
+  const endPointer = (e: ReactPointerEvent<HTMLCanvasElement>, isUp: boolean) => {
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.delete(e.pointerId);
+    const g = gesture.current;
+    if (!g) return;
+    if (pointers.current.size > 0) {
+      g.pinch = null; // one finger stays down: carry on as a pan from where it is
+      return;
+    }
+    gesture.current = null;
+    if (!isUp || g.moved) return;
     const chain = sceneRef.current.chain;
     const last = lastRef.current;
     if (!chain || !last) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    onSelect(hitTest(chain, last.joints, frame(), e.clientX - rect.left, e.clientY - rect.top));
+    const p = local(e);
+    onSelect(hitTest(chain, last.joints, frame(), p.x, p.y));
   };
 
   const zoomBy = (f: number) => setView(zoomAt(viewRef.current, sizeRef.current, f, sizeRef.current.width / 2, sizeRef.current.height / 2));
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-xl bg-white">
+    <div className="absolute inset-0 overflow-hidden rounded-xl bg-white">
       <div ref={wrapRef} className="absolute inset-0">
         <canvas ref={staticRef} className="absolute inset-0 h-full w-full" aria-hidden="true" />
         <canvas
           ref={dynamicRef}
           data-testid="viz-canvas"
           role="img"
-          aria-label="푸리에 에피사이클 애니메이션. 드래그로 이동, 휠로 확대, 원을 클릭하면 성분 정보가 표시됩니다."
-          className="absolute inset-0 h-full w-full cursor-grab active:cursor-grabbing"
-          // Vertical swipes still scroll the page on touch screens; zoom has buttons.
-          style={{ touchAction: 'pan-y' }}
+          aria-label="푸리에 에피사이클 애니메이션. 드래그로 이동, 두 손가락 또는 휠로 확대·축소, 원을 누르면 성분 정보가 표시됩니다."
+          className="no-select absolute inset-0 h-full w-full cursor-grab active:cursor-grabbing"
+          style={{ touchAction: 'none' }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={() => (dragRef.current = null)}
+          onPointerUp={(e) => endPointer(e, true)}
+          onPointerCancel={(e) => endPointer(e, false)}
         />
       </div>
 
-      <div className="pointer-events-none absolute top-2 left-2 flex max-w-[calc(100%-3.5rem)] flex-wrap gap-1.5">{stats}</div>
+      <div className="pointer-events-none absolute top-2 left-2 flex max-w-[calc(100%-3.75rem)] flex-wrap items-start gap-1.5 sm:max-w-[calc(100%-4rem)]">{stats}</div>
       <div
         ref={statsRef}
         data-testid="perf-stats"
@@ -276,20 +344,20 @@ export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, re
       />
 
       <div className="absolute top-2 right-2 flex flex-col gap-1.5">
-        <IconButton label="확대" onClick={() => zoomBy(1.4)}>
+        <IconButton label="확대" className="bg-white/90" onClick={() => zoomBy(1.4)}>
           <ZoomInIcon />
         </IconButton>
-        <IconButton label="축소" onClick={() => zoomBy(1 / 1.4)}>
+        <IconButton label="축소" className="bg-white/90" onClick={() => zoomBy(1 / 1.4)}>
           <ZoomOutIcon />
         </IconButton>
-        <IconButton label="화면 맞춤" onClick={fit}>
+        <IconButton label="화면 맞춤" className="bg-white/90" onClick={fit}>
           <FitIcon />
         </IconButton>
         <IconButton
           label="원점 복귀 (기본 보기)"
+          className="bg-white/90"
           onClick={() => {
-            followRef.current = false;
-            setFollow(false);
+            stopFollow();
             setView(DEFAULT_VIEW);
           }}
         >
@@ -298,20 +366,21 @@ export function Visualizer({ scene, player, fitKey, onSelect, overlay, stats, re
         <IconButton
           label="끝점 따라가기"
           active={follow}
+          className={follow ? '' : 'bg-white/90'}
           onClick={() => {
             const next = !followRef.current;
             followRef.current = next;
             setFollow(next);
             // Following is most useful zoomed in on the small circles near the tip.
             if (next && viewRef.current.zoom < 4) viewRef.current = { ...viewRef.current, zoom: 6 };
-            setZoomLabel(viewRef.current.zoom);
+            setZoomLabel(zoomText(viewRef.current.zoom));
             paintAll();
           }}
         >
           <TargetIcon />
         </IconButton>
-        <span className="rounded bg-white/85 px-1 text-center font-mono text-[10px] text-slate-500 tabular" aria-label="확대 배율">
-          ×{zoomLabel < 10 ? zoomLabel.toFixed(1) : zoomLabel.toFixed(0)}
+        <span className="rounded bg-white/85 px-1 text-center font-mono text-[10px] text-slate-500 tabular" aria-label="확대 배율" data-testid="zoom-label">
+          {zoomLabel}
         </span>
       </div>
 

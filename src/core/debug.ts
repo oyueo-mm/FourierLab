@@ -9,6 +9,9 @@ export interface DebugSources {
 
 const sources: DebugSources = {};
 
+/** How often the expensive stages ran; the tests use it to prove that a slider does not redo the FFT. */
+export const counters = { prepare: 0, spectrum: 0 };
+
 export function registerDebug<K extends keyof DebugSources>(key: K, fn: NonNullable<DebugSources[K]>): () => void {
   sources[key] = fn;
   return () => {
@@ -24,6 +27,6 @@ declare global {
 
 if (typeof window !== 'undefined') {
   window.__FOURIERLAB__ = {
-    state: () => ({ ...(sources.app?.() ?? {}), ...(sources.viz?.() ?? {}) }),
+    state: () => ({ ...(sources.app?.() ?? {}), ...(sources.viz?.() ?? {}), counters: { ...counters } }),
   };
 }
