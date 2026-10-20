@@ -1,0 +1,85 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Pretendard', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+  --color-accent: #1d4ed8;
+  --color-accent-strong: #1e3a8a;
+  --color-accent-soft: #eff4ff;
+  --color-teal: #0d9488;
+  --color-ink: #0f172a;
+  --color-muted: #64748b;
+  --color-line: #e2e8f0;
+  --color-surface: #ffffff;
+  --color-canvas: #f8fafc;
+}
+
+html {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--color-canvas);
+  font-family: var(--font-sans);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Range inputs: thin track, clear thumb. */
+input[type='range'].slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type='range'].slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--color-accent) 0 var(--fill, 0%), #dbe2ea var(--fill, 0%) 100%);
+}
+input[type='range'].slider::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: #dbe2ea;
+}
+input[type='range'].slider::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-accent);
+}
+input[type='range'].slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--color-accent);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.15);
+}
+input[type='range'].slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--color-accent);
+}
+input[type='range'].slider:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

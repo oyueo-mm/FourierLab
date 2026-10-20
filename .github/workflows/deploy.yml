@@ -1,0 +1,83 @@
+name: Test and deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# GITHUB_TOKEN permissions needed by actions/deploy-pages (OIDC token + Pages write).
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push cancels a queued (not a running) deployment.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # Fail early if an asset URL ignores the /FourierLab/ base path.
+      - name: Verify base path in build output
+        run: |
+          grep -q 'src="/FourierLab/assets/' dist/index.html
+          grep -q 'href="/FourierLab/assets/' dist/index.html
+          grep -q 'href="/FourierLab/logo.svg"' dist/index.html
+          test -f dist/logo.svg
+          if grep -E '(href|src)="/(assets|logo|favicon)' dist/index.html; then
+            echo "Found an asset URL without the /FourierLab/ base path" >&2
+            exit 1
+          fi
+
+      # Real-browser regression test of the built site, served under /FourierLab/ like Pages.
+      - uses: browser-actions/setup-chrome@v2
+        id: chrome
+        with:
+          install-dependencies: true
+
+      - name: Browser smoke test
+        run: npm run e2e
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy:
+    # Pull requests are only built and tested, never deployed.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
