@@ -60,8 +60,8 @@ export const SpectrumChart = memo(function SpectrumChart({ spectrum, used, selec
         <span className="inline-flex items-center gap-1.5">
           <i className="h-2.5 w-2.5 rounded-sm" style={{ background: DC }} /> k = 0 (중심 위치)
         </span>
-        <div className="ml-auto flex gap-2">
-          <div className="w-52">
+        <div className="ml-auto flex w-full gap-2">
+          <div className="min-w-0 flex-1">
             <Segmented
               label="표시 범위"
               size="sm"
@@ -70,7 +70,7 @@ export const SpectrumChart = memo(function SpectrumChart({ spectrum, used, selec
               options={WINDOWS.map((w) => ({ value: w, label: `±${w}` }))}
             />
           </div>
-          <div className="w-28">
+          <div className="w-28 shrink-0">
             <Segmented
               label="세로축 눈금"
               size="sm"

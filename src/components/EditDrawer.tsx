@@ -9,7 +9,10 @@ import type { PathMode, Vec2 } from '../math/path';
 import { PRESETS, type PresetId } from '../math/presets';
 import { DrawingCanvas, type StrokeEvent } from './DrawingCanvas';
 import { CloseIcon, EraseIcon, RedoIcon, SparkIcon, UndoIcon } from './icons';
+import { ImageImport, type ImageRequest } from './ImageImport';
 import { Button, IconButton, Segmented, cx } from './ui';
+
+export type EditorTab = 'draw' | 'image';
 
 export interface Notice {
   kind: 'error' | 'warning' | 'info';
@@ -26,6 +29,11 @@ interface Props {
   mode: PathMode;
   /** The drawing differs from what the animation currently shows. */
   pending: boolean;
+  tab: EditorTab;
+  onTab: (tab: EditorTab) => void;
+  /** Latest image handed over by the header, a drop or a paste. */
+  imageRequest: ImageRequest | null;
+  onImageApply: (points: Vec2[]) => void;
   notice: Notice | null;
   canUndo: boolean;
   canRedo: boolean;
@@ -43,12 +51,6 @@ interface Props {
   onStrokeEnd: (e: StrokeEvent) => void;
   onStrokeCancel: () => void;
 }
-
-const MODE_HELP: Record<PathMode, string> = {
-  closed: '끝점과 시작점을 직선(점선 표시)으로 이어 폐곡선으로 만듭니다.',
-  retrace: '선을 따라갔다가 같은 길로 되돌아옵니다. 연결선은 없지만 모든 부분을 두 번 그립니다.',
-  open: '끝점에서 시작점으로 순간 이동하는 불연속이 생깁니다. 그 근처에서 진동(깁스 현상)을 관찰할 수 있습니다.',
-};
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -113,7 +115,6 @@ export function EditDrawer(p: Props) {
   useEffect(() => {
     if (p.open && bodyRef.current) bodyRef.current.scrollTop = 0;
   }, [p.open]);
-  const preset = PRESETS.find((x) => x.id === p.source);
 
   return (
     <div
@@ -151,6 +152,22 @@ export function EditDrawer(p: Props) {
         </header>
 
         <div ref={bodyRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4">
+          <Segmented<EditorTab>
+            label="입력 방식"
+            value={p.tab}
+            onChange={p.onTab}
+            options={[
+              { value: 'draw', label: '직접 그리기' },
+              { value: 'image', label: '이미지' },
+            ]}
+          />
+
+          {/* Both panes stay mounted: switching never discards the stroke or the uploaded image. */}
+          <div hidden={p.tab !== 'image'}>
+            <ImageImport request={p.imageRequest} onApply={p.onImageApply} />
+          </div>
+
+          <div hidden={p.tab !== 'draw'} className="space-y-4">
           <div
             className="relative mx-auto aspect-square overflow-hidden rounded-xl border border-line bg-white"
             style={{ width: 'min(100%, max(18rem, calc(100dvh - 16rem)))' }}
@@ -159,9 +176,7 @@ export function EditDrawer(p: Props) {
             <DrawingCanvas points={p.points} mode={p.mode} onStrokeStart={p.onStrokeStart} onStrokeEnd={p.onStrokeEnd} onStrokeCancel={p.onStrokeCancel} />
             {!p.points && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-slate-400">
-                여기에 한 번에 이어지는 선을 그려 보세요.
-                <br />
-                손을 떼면 하나의 선이 완성됩니다.
+                여기에 선을 그리세요
               </div>
             )}
             <div className="pointer-events-none absolute bottom-2 left-2 flex items-center gap-1.5 rounded bg-white/85 px-1.5 py-0.5 text-[11px] text-slate-500">
@@ -185,28 +200,8 @@ export function EditDrawer(p: Props) {
             </Button>
           </div>
 
-          {p.notice && (
-            <p
-              role={p.notice.kind === 'error' ? 'alert' : 'status'}
-              data-testid="notice"
-              className={cx(
-                'rounded-lg px-3 py-2 text-sm leading-relaxed',
-                p.notice.kind === 'error' && 'bg-rose-50 text-rose-700',
-                p.notice.kind === 'warning' && 'bg-amber-50 text-amber-800',
-                p.notice.kind === 'info' && 'bg-slate-100 text-slate-700',
-              )}
-            >
-              {p.notice.text}
-            </p>
-          )}
-          {p.pending && p.points && p.notice?.kind !== 'error' && (
-            <p data-testid="pending-note" className="rounded-lg bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-800">
-              아직 적용하지 않은 그림입니다. 「편집 완료 · 재구성」을 누르면 이 그림으로 다시 그립니다. 닫기만 해도 그림은 지워지지 않습니다.
-            </p>
-          )}
-
           <div>
-            <SectionLabel>예제 (누르면 바로 적용)</SectionLabel>
+            <SectionLabel>예제</SectionLabel>
             <div className="flex flex-wrap gap-2">
               {PRESETS.map((x) => (
                 <button
@@ -224,8 +219,28 @@ export function EditDrawer(p: Props) {
                 </button>
               ))}
             </div>
-            {preset?.note && <p className="mt-2 rounded-lg bg-accent-soft px-3 py-2 text-xs leading-relaxed text-slate-700">{preset.note}</p>}
           </div>
+          </div>
+
+          {p.notice && (
+            <p
+              role={p.notice.kind === 'error' ? 'alert' : 'status'}
+              data-testid="notice"
+              className={cx(
+                'rounded-lg px-3 py-2 text-sm leading-relaxed',
+                p.notice.kind === 'error' && 'bg-rose-50 text-rose-700',
+                p.notice.kind === 'warning' && 'bg-amber-50 text-amber-800',
+                p.notice.kind === 'info' && 'bg-slate-100 text-slate-700',
+              )}
+            >
+              {p.notice.text}
+            </p>
+          )}
+          {p.pending && p.points && p.notice?.kind !== 'error' && (
+            <p data-testid="pending-note" className="rounded-lg bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-800">
+              아직 적용하지 않은 그림입니다.
+            </p>
+          )}
 
           <div>
             <SectionLabel>경로 처리 방식</SectionLabel>
@@ -239,13 +254,10 @@ export function EditDrawer(p: Props) {
                 { value: 'open', label: '열린 경로' },
               ]}
             />
-            <p className="mt-1.5 text-xs leading-relaxed text-muted" data-testid="mode-help">
-              {MODE_HELP[p.mode]}
-            </p>
           </div>
         </div>
 
-        <footer className="grid shrink-0 grid-cols-[1fr_1.4fr] gap-2 border-t border-line bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <footer hidden={p.tab === 'image'} className="grid shrink-0 grid-cols-[1fr_1.4fr] gap-2 border-t border-line bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <Button className="h-12" onClick={p.onRestart} disabled={!p.points} data-testid="run">
             재구성 다시 시작
           </Button>

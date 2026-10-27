@@ -28,11 +28,15 @@ src/
   hooks/useAnalysis.ts  분석 파이프라인 메모이제이션
   components/
     Visualizer.tsx      에피사이클 캔버스, 휠·드래그·핀치 제스처
-    ControlsDock.tsx    재생·타임라인·원 개수·속도·성분 선택·표시 옵션 (반응형 배치)
-    PlaybackControls.tsx / CircleControls.tsx   ControlsDock의 부품
-    EditDrawer.tsx      그림 편집 드로어(모달, 포커스 관리)
+    Sidebar.tsx         오른쪽 접이식 사이드바(재생·타임라인·속도·원 개수·성분 선택·표시 항목·고급 설정·수학적 분석)
+    PlaybackControls.tsx / CircleControls.tsx   Sidebar의 부품
+    EditDrawer.tsx      그림 편집 드로어(모달, 포커스 관리). 「직접 그리기」 / 「이미지」 탭
+    ImageImport.tsx     이미지 탭: 업로드 → 자동 윤곽선 추출 → 미리보기 → 적용
     DrawingCanvas.tsx   그림 입력 캔버스 (Pointer Events)
-    Header.tsx, Toast.tsx, SpectrumChart.tsx, ErrorChart.tsx, LearnPanel.tsx, SettingsPanel.tsx, ComponentInfo.tsx, ui.tsx, icons.tsx
+    Header.tsx, Toast.tsx, SpectrumChart.tsx, ErrorChart.tsx, SettingsPanel.tsx, ComponentInfo.tsx, ui.tsx, icons.tsx
+  image/
+    contour.ts          RGBA → ink 맵 → 블러 → Otsu 임계값 → marching squares → 평활화·Douglas–Peucker → 수학 좌표계 (DOM 없음, 단위 테스트)
+    load.ts             파일 검증, 디코딩, 작업 해상도(긴 변 384px)로 축소
 e2e/            실제 브라우저 테스트(puppeteer-core), 성능 측정, 문서용 스크린샷
 scripts/bench.ts  수학 엔진 벤치마크
 ```
@@ -40,17 +44,25 @@ scripts/bench.ts  수학 엔진 벤치마크
 ## 화면 구조
 
 ```
-┌ Header: FourierLab · [그림 편집] · PNG · 저장 · 불러오기 · 원리 (모바일: 편집 + ⋯ 메뉴) ┐
-├ Stage (min-height: 100dvh − 헤더) ─────────────────────────────────────────────┤
-│  Visualizer (flex: 1, 최소 300px)                                               │
-│  ControlsDock  ─ 데스크톱: 3열 / 모바일: 1열 + 「더보기」 접이식                    │
-├ 수학적 분석 (접힘이 기본) · 고급 설정 (접힘이 기본) ──────────────────────────────┤
-└ EditDrawer (fixed, 닫힘 = visibility:hidden + inert) ──────────────────────────┘
+┌ Header (h-14): 로고 · [그림 편집] · 이미지 업로드 · PNG · 저장 · 불러오기 · [사이드바 토글] ┐
+├ main (flex, 남은 높이 전체, 페이지 스크롤 없음) ─────────────────────────────────────────┤
+│  Stage (flex-1)                          │  Sidebar (lg+: 22.5rem, 너비 애니메이션)       │
+│   Visualizer (캔버스)                    │   재생 · 타임라인 · 속도                       │
+│   MobileBar (lg 미만만: 재생 · 설정)     │   원 개수 K · 성분 선택 · 표시 항목            │
+│                                          │   고급 설정 ▸ · 수학적 분석 ▸  (내부 스크롤)  │
+└ EditDrawer (fixed, 닫힘 = visibility:hidden + inert) ───────────────────────────────────┘
 ```
 
-- Stage는 `min-h-[calc(100dvh-3.5rem)]`인 세로 flex입니다. 캔버스가 남는 높이를 모두 차지하므로 화면 높이가 달라도 컨트롤이 첫 화면 안에 들어옵니다. `dvh`와 `env(safe-area-inset-*)`로 모바일 브라우저 주소창 변화와 노치를 반영합니다.
-- ControlsDock의 「더보기」 그룹은 `display: contents`를 써서 데스크톱(lg+)에서는 3열 그리드의 칸으로 바로 배치되고, 모바일에서는 접힌 영역이 됩니다. DOM은 하나이므로 컴포넌트를 두 벌 만들지 않습니다.
+- 루트는 `h-dvh overflow-hidden`이고 캔버스와 사이드바가 같은 높이를 공유합니다. 사이드바 내용이 길면 사이드바만 스크롤됩니다.
+- 사이드바는 닫혀도 마운트된 채 `inert`로 숨겨집니다. 열고 닫는 것은 React 상태 하나(`sidebarOpen`)뿐이어서 Player, 설정, 뷰포트에는 영향이 없습니다. lg(1024px) 이상에서는 `width`가 0 ↔ 22.5rem으로 전환되고(안쪽 폭은 고정), 그 미만에서는 오른쪽에서 슬라이드하는 오버레이 + 배경 막입니다. 캔버스는 ResizeObserver로 크기를 따라가며 뷰(중심·배율)는 유지합니다.
 - 슬라이더는 `pointer: coarse` 또는 폭 640px 미만에서 44px 높이와 28px 손잡이를 사용합니다.
+
+## 이미지 업로드
+
+1. `load.ts`: 형식(PNG/JPEG/WebP)·크기(20MB, 1억 화소)를 확인하고 긴 변 384px로 축소한 RGBA를 만듭니다. 새 업로드가 오면 이전 처리 결과는 버려집니다(토큰 비교).
+2. `contour.ts`: 투명도가 있으면 알파를, 아니면 밝기(어두운 쪽 = 전경, 테두리가 어두우면 반전)를 ink 값으로 씁니다 → 3×3 블러 → Otsu 임계값(+사용자 오프셋) → **marching squares**로 방향이 있는 닫힌 고리를 추적 → 평활화 → Douglas–Peucker 단순화 → 둘레 순으로 정렬한 후보(최대 12개).
+3. 후보 하나가 수학 좌표계(y 위, bbox 긴 변 = ±0.85, 종횡비 유지)의 획이 되어 직접 그린 획과 똑같이 `preparePath` → FFT 파이프라인으로 들어갑니다. 프로젝트 JSON·자동 저장에는 좌표만 저장되고(`source: "image"`), 이미지 자체는 저장하지 않습니다.
+4. 서로 떨어진 윤곽선은 직선으로 잇지 않고 후보로만 제공합니다.
 
 ## 데이터 흐름
 

@@ -16,7 +16,7 @@ await page.goto(server.url, { waitUntil: 'networkidle0' });
 await page.evaluate(() => localStorage.clear());
 await page.reload({ waitUntil: 'networkidle0' });
 await wait(1800);
-if (flags.includes('--more')) await page.$eval('[data-testid="dock-more-toggle"]', (e) => e.click());
+if (flags.includes('--more')) await page.$eval('[data-testid="mobile-settings"]', (e) => e.click());
 if (flags.includes('--drawer')) {
   await page.$eval('[data-testid="open-editor"]', (e) => e.click());
   await wait(500);

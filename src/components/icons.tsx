@@ -159,3 +159,26 @@ export const MoreIcon = (p: IconProps) => (
     <circle cx="19" cy="12" r="1.2" fill="currentColor" />
   </Icon>
 );
+
+export const ImageIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <circle cx="9" cy="10" r="1.6" />
+    <path d="m21 16-5-5-8 9" />
+  </Icon>
+);
+export const RepeatIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m17 2 4 4-4 4" />
+    <path d="M3 11V9a3 3 0 0 1 3-3h15" />
+    <path d="m7 22-4-4 4-4" />
+    <path d="M21 13v2a3 3 0 0 1-3 3H3" />
+  </Icon>
+);
+/** Right sidebar toggle (window with a right column). */
+export const SidebarIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M15 4v16" />
+  </Icon>
+);

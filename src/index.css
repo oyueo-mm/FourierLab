@@ -15,8 +15,6 @@
 }
 
 html {
-  /* Keep the layout width fixed when the drawer locks page scrolling (no resize of the canvas). */
-  scrollbar-gutter: stable;
   background: var(--color-canvas);
   color: var(--color-ink);
   -webkit-text-size-adjust: 100%;

@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "bench": "tsx scripts/bench.ts",
     "e2e": "node e2e/smoke.mjs",
+    "e2e:image": "node e2e/image.mjs",
     "perf": "node e2e/perf.mjs"
   },
   "dependencies": {

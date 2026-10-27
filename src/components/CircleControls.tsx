@@ -45,12 +45,7 @@ export function CircleCountControl({ sampleCount, count, onPreview, onCommit }: 
 
   const quick = [1, 2, 5, 10, 50, 100, max];
   return (
-    <Field label="원의 개수 K" hint={
-        <>
-          최대 {max.toLocaleString()}
-          <span className="hidden sm:inline"> · 바꾸면 처음부터 다시 그립니다</span>
-        </>
-      }>
+    <Field label="원의 개수 K">
       <div className="flex items-center gap-3">
         <Slider
           label="원의 개수"

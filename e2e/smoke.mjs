@@ -115,15 +115,48 @@ const drawerHidden = async (page) => !(await isVisible(page, '[data-testid="edit
   section('초기 화면과 레이아웃');
   check('첫 방문: 하트 예제가 바로 재생된다', st.source === 'heart' && st.playing === true, `source=${st.source} playing=${st.playing}`);
   check('정적 레이어가 칠해져 있고 배경은 흰색(검은 화면 없음)', (await inkFraction(page, 'canvas[aria-hidden="true"]')) > 0.005);
-  const bg = await page.$eval('canvas[aria-hidden="true"]', (c) => Array.from(c.getContext('2d').getImageData(2, 2, 1, 1).data));
+  const bg = await page.$eval('canvas[aria-hidden="true"]', (c) => {
+    // A grid line can pass through any single pixel, so look at the brightest of a few.
+    const px = [[7, 9], [11, 21], [23, 13], [29, 31]].map(([x, y]) => Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data));
+    return px.reduce((a, b) => (b[0] > a[0] ? b : a));
+  });
   check('캔버스 배경 흰색', bg[0] > 240 && bg[3] === 255, bg.join(','));
   check('왼쪽 고정 그림 패널이 없다 (편집 드로어는 닫힘, 숨김·inert)', (await drawerHidden(page)) && (await page.$eval('[data-testid="edit-drawer"]', (e) => e.inert)));
   const stage = await rect(page, '[data-testid="stage"]');
-  check('메인 캔버스가 화면 너비 대부분을 사용 (≥ 95%)', stage.width >= 1440 * 0.95, `${Math.round(stage.width)}×${Math.round(stage.height)} px`);
-  check('메인 캔버스 높이 ≥ 560px', stage.height >= 560, `${Math.round(stage.height)}px`);
-  check('컨트롤(재생·원 개수)이 첫 화면 안에 보임', (await rect(page, '[data-testid="controls-dock"]')).bottom <= 900);
+  const side = await rect(page, '[data-testid="sidebar"]');
+  check('오른쪽 사이드바가 기본으로 열려 있다 (320~380px)', (await state(page)).sidebarOpen && side.width >= 320 && side.width <= 380 && side.x > 1000, `${Math.round(side.width)}px`);
+  check('캔버스와 사이드바가 가로 공간을 모두 사용 (≥ 95%)', stage.width + side.width >= 1440 * 0.95, `${Math.round(stage.width)} + ${Math.round(side.width)} px`);
+  check('캔버스와 사이드바가 같은 높이의 작업 영역을 공유', Math.abs(stage.bottom + 12 - side.bottom) < 16 && stage.height >= 700, `stage ${Math.round(stage.height)}px, sidebar ${Math.round(side.height)}px`);
+  check('페이지 전체가 세로 스크롤되지 않는다', await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1));
+  check('재생·원 개수 컨트롤이 첫 화면 안에 보임', (await rect(page, '[data-testid="circle-slider"]')).bottom <= 900 && (await isVisible(page, '[data-testid="play-toggle"]')));
+  check('하단 조작 패널(controls-dock)이 없다', !(await exists(page, '[data-testid="controls-dock"]')));
+  check('"원리" 버튼과 수학 원리 탭이 없다', !(await exists(page, '[data-testid="help"]')) && !(await page.evaluate(() => /원리/.test(document.body.innerText))));
+  check('긴 안내 문구가 없다', await page.evaluate(() => !/최대 1,023|바꾸면 처음부터|예제 \(누르면/.test(document.body.innerText)));
   check('수학적 분석은 기본적으로 접혀 있고 차트를 그리지 않는다', !(await exists(page, '#analysis-body')) && !(await exists(page, '[data-testid="spectrum-chart"]')));
   const baseSpectrum = st.counters.spectrum;
+
+  section('사이드바 열기/닫기');
+  {
+    await click(page, '[data-testid="circles-50"]');
+    await click(page, '[data-testid="speed-2"]');
+    await page.$$eval('[aria-label="표시 항목"] button[aria-pressed]', (els) => els.find((e) => e.textContent.trim() === '원')?.click());
+    await wait(150);
+    const s0 = await state(page);
+    const w0 = (await rect(page, '[data-testid="stage"]')).width;
+    await click(page, '[data-testid="sidebar-close"]');
+    await wait(450);
+    const s1 = await state(page);
+    const w1 = (await rect(page, '[data-testid="stage"]')).width;
+    check('닫으면 사이드바가 사라지고 캔버스가 남은 공간을 사용', !s1.sidebarOpen && w1 > w0 + 300 && (await page.$eval('[data-testid="sidebar"]', (e) => e.inert)), `${Math.round(w0)} → ${Math.round(w1)} px`);
+    check('닫기는 시뮬레이션 시간·재생 상태·설정을 바꾸지 않는다', s1.restarts === s0.restarts && s1.playing === s0.playing && s1.circleCount === 50 && s1.speed === 2 && s1.display.circles === false && s1.t >= s0.t - 0.001, `restarts ${s0.restarts}→${s1.restarts}`);
+    check('캔버스가 새 크기로 다시 그려진다 (찌그러지지 않음)', Math.abs(s1.canvas.width - w1) < 4 && (await inkFraction(page, 'canvas[aria-hidden="true"]')) > 0.005);
+    await click(page, '[data-testid="sidebar-toggle"]');
+    await wait(450);
+    const s2 = await state(page);
+    check('헤더 버튼으로 다시 열고, 설정이 그대로 유지된다', s2.sidebarOpen && s2.restarts === s0.restarts && s2.circleCount === 50 && s2.speed === 2 && (await isVisible(page, '[data-testid="sidebar"]')));
+    await page.$$eval('[aria-label="표시 항목"] button[aria-pressed]', (els) => els.find((e) => e.textContent.trim() === '원')?.click());
+    await click(page, '[data-testid="speed-label"]');
+  }
 
   section('원 개수 변경 → 처음부터 다시 재생');
   // 1) 재생 중 변경
@@ -439,7 +472,7 @@ const drawerHidden = async (page) => !(await isVisible(page, '[data-testid="edit
   await clickRadio(page, '경로 처리 방식', '왕복 경로');
   st = await state(page);
   check('경로 모드는 편집 중 그림에만 적용 (적용 전까지 메인 불변)', st.drawingMode === 'retrace' && st.pathMode === 'closed');
-  check('경로 설명이 모드에 맞게 바뀐다', (await page.$eval('[data-testid="mode-help"]', (e) => e.textContent)).includes('되돌아옵니다'));
+  check('경로 처리 방식 아래에 설명 문구가 없다', !(await exists(page, '[data-testid="mode-help"]')) && !(await page.evaluate(() => /직선\(점선 표시\)|깁스/.test(document.body.innerText))));
   await page.$eval('[data-testid="drawing-frame"]', (e) => e.scrollIntoView({ block: 'start' }));
   await wait(100);
   const fr2 = await rect(page, '[data-testid="drawing-frame"]');
@@ -505,8 +538,7 @@ const drawerHidden = async (page) => !(await isVisible(page, '[data-testid="edit
   await clickRadio(page, '분석 보기', '원 개수와 오차');
   await wait(300);
   check('"원 개수와 오차" 차트와 RMSE 표시', (await exists(page, '[data-testid="error-chart"] svg')) && (await page.$eval('[data-testid="rmse-value"]', (e) => e.textContent)) === (await state(page)).rmse.toPrecision(4));
-  await clickRadio(page, '분석 보기', '수학 원리');
-  check('"수학 원리" 설명이 열린다', (await page.evaluate(() => document.body.textContent)).includes('푸리에 급수란?'));
+  check('분석 보기에 "수학 원리" 항목이 없다', !(await page.evaluate(() => document.body.textContent)).includes('푸리에 급수란?') && !(await page.evaluate(() => [...document.querySelectorAll('[role="radio"]')].some((e) => e.textContent.includes('수학 원리')))));
   await click(page, '[data-testid="analysis-toggle"]');
   check('분석 패널을 닫으면 차트가 사라진다', !(await exists(page, '#analysis-body')));
 
@@ -658,12 +690,15 @@ section('뷰포트별 레이아웃 (가로 스크롤, 첫 화면 컨트롤, 드�
     await wait(500);
     const over = await noOverflow(page);
     const st = await state(page);
-    const first = ['[data-testid="play-toggle"]', '[data-testid="circle-slider"]', '[data-testid="circles-100"]'];
+    // < 1024 px the sidebar is an overlay: the essentials are the compact bar under the canvas.
+    const overlay = v.width < 1024;
+    const first = overlay ? ['[data-testid="mobile-play-toggle"]', '[data-testid="mobile-settings"]'] : ['[data-testid="play-toggle"]', '[data-testid="circle-slider"]', '[data-testid="circles-100"]'];
     const rects = await Promise.all(first.map((s) => rect(page, s)));
+    const sidebarW = overlay ? 0 : (await rect(page, '[data-testid="sidebar"]')).width;
     const stage = await rect(page, '[data-testid="stage"]');
     check(`${v.name}: 가로 스크롤 없음`, over <= 0, `overflow=${over}px`);
-    check(`${v.name}: 재생·원 개수 조절·빠른 선택이 첫 화면 안에 있다`, rects.every((r) => r.top >= 0 && r.bottom <= v.height && r.right <= v.width + 0.5), rects.map((r) => Math.round(r.bottom)).join('/'));
-    check(`${v.name}: 메인 캔버스 ${Math.round(stage.width)}×${Math.round(stage.height)}`, stage.height >= 300 && stage.width >= v.width * 0.9, `${Math.round(stage.width)}×${Math.round(stage.height)}`);
+    check(`${v.name}: 재생과 설정(원 개수 조절)에 첫 화면에서 접근할 수 있다`, rects.every((r) => r.top >= 0 && r.bottom <= v.height && r.right <= v.width + 0.5), rects.map((r) => Math.round(r.bottom)).join('/'));
+    check(`${v.name}: 메인 캔버스 ${Math.round(stage.width)}×${Math.round(stage.height)}`, stage.height >= 300 && stage.width + sidebarW >= v.width * 0.9, `${Math.round(stage.width)}×${Math.round(stage.height)}`);
     check(`${v.name}: 캔버스가 그려져 있다`, (await inkFraction(page, 'canvas[aria-hidden="true"]')) > 0.005 && st.canvas.width > 200);
     await page.click('[data-testid="open-editor"]');
     await wait(450);
@@ -698,6 +733,13 @@ section('모바일 터치 (390×844, 터치 에뮬레이션)');
   const stage = await rect(page, '[data-testid="stage"]');
   check('모바일 메인 캔버스 높이 ≥ 380px', stage.height >= 380, `${Math.round(stage.width)}×${Math.round(stage.height)}`);
 
+  check('모바일: 사이드바는 닫혀 있고 재생 버튼은 바로 보인다', !st.sidebarOpen && (await isVisible(page, '[data-testid="mobile-play-toggle"]')));
+  await touch.tap(...center(await rect(page, '[data-testid="mobile-settings"]')));
+  await wait(450);
+  st = await state(page);
+  const sb = await rect(page, '[data-testid="sidebar"]');
+  check('모바일: 설정 버튼으로 사이드바가 화면 너비만큼 열린다', st.sidebarOpen && sb.x >= -1 && sb.width <= 390 && sb.width >= 380, `${Math.round(sb.width)}px`);
+
   // 터치 대상 크기
   const sizes = {};
   for (const [name, sel] of [
@@ -710,7 +752,7 @@ section('모바일 터치 (390×844, 터치 에뮬레이션)');
     ['빠른 선택 전체', '[data-testid="circles-all"]'],
     ['그림 편집', '[data-testid="open-editor"]'],
     ['더보기 메뉴', '[data-testid="more-menu"]'],
-    ['속도·성분·표시 펼치기', '[data-testid="dock-more-toggle"]'],
+    ['사이드바 닫기', '[data-testid="sidebar-close"]'],
     ['확대', 'button[aria-label="확대"]'],
     ['원 슬라이더', '[data-testid="circle-slider"]'],
     ['타임라인', '[data-testid="timeline"]'],
@@ -720,12 +762,7 @@ section('모바일 터치 (390×844, 터치 에뮬레이션)');
     check(`터치 대상 ≥ 44px: ${name}`, r.height >= 43.5 && (r.width >= 43.5 || name.includes('슬라이더') || name === '타임라인' || name.includes('펼치기')), sizes[name]);
   }
 
-  // 더보기 접이식 영역
-  check('속도 슬라이더는 기본적으로 접혀 있다', !(await isVisible(page, '[data-testid="speed-slider"]')));
-  await click(page, '[data-testid="dock-more-toggle"]');
-  await wait(100);
-  check('"속도·성분 선택·표시 옵션"을 펼치면 속도 슬라이더가 보인다', await isVisible(page, '[data-testid="speed-slider"]'));
-  await click(page, '[data-testid="dock-more-toggle"]');
+  check('사이드바 안에 속도·성분·표시 옵션이 모두 있다', (await isVisible(page, '[data-testid="speed-slider"]')) && (await isVisible(page, '[aria-label="표시 항목"]')));
 
   // 슬라이더 터치 드래그: 미리보기 → 손을 떼면 확정
   {
@@ -763,6 +800,11 @@ section('모바일 터치 (390×844, 터치 에뮬레이션)');
 
   // 핀치 확대·축소, 한 손가락 이동 (페이지 스크롤과 충돌하지 않음)
   {
+    const r0 = (await state(page)).restarts;
+    await touch.tap(...center(await rect(page, '[data-testid="sidebar-close"]')));
+    await wait(450);
+    const closed = await state(page);
+    check('모바일: 사이드바를 닫아도 재생이 초기화되지 않고 K = 50 유지', !closed.sidebarOpen && closed.restarts === r0 && closed.circleCount === 50);
     const vr = await rect(page, '[data-testid="viz-canvas"]');
     const [cx, cy] = center(vr);
     await page.evaluate(() => scrollTo(0, 0));
@@ -784,19 +826,12 @@ section('모바일 터치 (390×844, 터치 에뮬레이션)');
     await click(page, 'button[aria-label="화면 맞춤"]');
   }
 
-  // 컨트롤 영역 세로 스크롤은 정상 동작
-  {
-    const dock = await rect(page, '[data-testid="controls-dock"]');
-    await touch.drag(lerpPath([dock.x + 8, dock.y + 40], [dock.x + 8, dock.y - 260], 12));
-    await wait(500);
-    const sy = await page.evaluate(() => scrollY);
-    check('컨트롤 영역을 위로 쓸면 페이지가 세로 스크롤된다', sy > 100, `scrollY=${Math.round(sy)}`);
-    await page.evaluate(() => scrollTo(0, 0));
-  }
+  check('모바일: 페이지 자체는 세로 스크롤되지 않는다 (사이드바만 내부 스크롤)', await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1));
 
   // 모바일 드로어: 전체 화면, 터치로 그리기
   {
     const eb = await rect(page, '[data-testid="open-editor"]');
+    await wait(500); // let the preceding pinch/pan gesture fully settle before tapping
     await touch.tap(...center(eb));
     await wait(500);
     st = await state(page);
@@ -833,7 +868,7 @@ section('모바일 터치 (390×844, 터치 에뮬레이션)');
   await page.setViewport({ width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await wait(600);
   st = await state(page);
-  check('가로 회전(844×390): 가로 스크롤 없음, 캔버스가 비어 있지 않다', (await noOverflow(page)) <= 0 && st.canvas.height >= 290 && (await inkFraction(page, 'canvas[aria-hidden="true"]')) > 0.005, `canvas=${Math.round(st.canvas.width)}×${Math.round(st.canvas.height)}`);
+  check('가로 회전(844×390): 가로 스크롤 없음, 캔버스가 비어 있지 않다', (await noOverflow(page)) <= 0 && st.canvas.height >= 240 && (await inkFraction(page, 'canvas[aria-hidden="true"]')) > 0.005, `canvas=${Math.round(st.canvas.width)}×${Math.round(st.canvas.height)}`);
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await wait(600);
   check('세로로 되돌린 뒤에도 정상', (await noOverflow(page)) <= 0 && (await inkFraction(page, 'canvas[aria-hidden="true"]')) > 0.005);

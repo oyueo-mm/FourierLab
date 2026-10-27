@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from 'react';
 import { registerDebug } from './core/debug';
 import { Player } from './core/player';
 import { createProject, MAX_PROJECT_BYTES, parseProject, serializeProject } from './core/project';
@@ -11,19 +11,17 @@ import { DEFAULT_PRESET, getPreset, type PresetId } from './math/presets';
 import type { SelectionMode } from './math/selection';
 import { downloadBlob, downloadCanvas, renderExport, type ExportKind } from './render/export';
 import type { SceneData } from './render/scene';
+import { checkFile } from './image/load';
 import { ComponentInfo } from './components/ComponentInfo';
-import { ControlsDock } from './components/ControlsDock';
 import type { StrokeEvent } from './components/DrawingCanvas';
-import { EditDrawer, type Notice } from './components/EditDrawer';
-import { ErrorChart } from './components/ErrorChart';
+import { EditDrawer, type EditorTab, type Notice } from './components/EditDrawer';
 import { Header } from './components/Header';
-import { ChevronIcon } from './components/icons';
-import { LearnPanel } from './components/LearnPanel';
-import { SettingsPanel } from './components/SettingsPanel';
-import { SpectrumChart } from './components/SpectrumChart';
+import { PauseIcon, PlayIcon, ReplayIcon, StepBackIcon, StepForwardIcon } from './components/icons';
+import type { ImageRequest } from './components/ImageImport';
+import { Sidebar } from './components/Sidebar';
 import { Toast, type ToastMessage } from './components/Toast';
 import { Visualizer, type VisualizerHandle } from './components/Visualizer';
-import { Panel, Segmented, cx } from './components/ui';
+import { Button, IconButton, cx } from './components/ui';
 
 interface Drawing {
   points: Vec2[] | null;
@@ -39,8 +37,6 @@ interface Analyzed {
   /** Increments on every new analysis; re-fits the view. */
   id: number;
 }
-
-type Tab = 'spectrum' | 'error' | 'learn';
 
 const presetDrawing = (id: PresetId): Drawing & { points: Vec2[] } => {
   const preset = getPreset(id)!;
@@ -60,6 +56,8 @@ function initialState() {
   return { settings: DEFAULT_SETTINGS, analyzed: { points: d.points, source: d.source, id: 1 }, drawing: d as Drawing };
 }
 
+const isDesktop = () => typeof matchMedia === 'function' && matchMedia('(min-width: 1024px)').matches;
+
 const prefersReducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export default function App() {
@@ -70,13 +68,14 @@ export default function App() {
   const [selectedK, setSelectedK] = useState<number | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
-  const [tab, setTab] = useState<Tab>('spectrum');
   const [analysisOpen, setAnalysisOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [editorTab, setEditorTab] = useState<EditorTab>('draw');
+  const [imageRequest, setImageRequest] = useState<ImageRequest | null>(null);
   const [player] = useState(() => new Player({ speed: init.settings.speed, loop: init.settings.loop }));
   const vizRef = useRef<VisualizerHandle>(null);
-  const analysisRef = useRef<HTMLElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
   const drawing = history.entries[history.index];
@@ -85,10 +84,6 @@ export default function App() {
   const pending = dirty && drawing.points !== null;
   const result = useAnalysis(analyzed.points, settings);
   const analysis = result.ok ? result.analysis : null;
-  // Charts follow slider changes at low priority so the animation responds first.
-  const chartUsed = useDeferredValue(analysis?.selection.frequencies);
-  const chartCircles = useDeferredValue(settings.circleCount);
-  const chartMode = useDeferredValue(settings.selectionMode);
 
   // Settings → player.
   useEffect(() => player.setSpeed(settings.speed), [player, settings.speed]);
@@ -180,6 +175,46 @@ export default function App() {
     return el && el !== document.body && document.contains(el) ? el : document.getElementById('open-editor');
   }, []);
 
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+  const toggleSidebar = useCallback(() => setSidebarOpen((o) => !o), []);
+
+  /** An image arrived (header button, drop or paste): open the editor on the image tab. */
+  const requestImage = useCallback(
+    (file: File) => {
+      const problem = checkFile(file);
+      if (problem) {
+        setToast({ id: Date.now(), kind: 'error', text: problem });
+        return;
+      }
+      setImageRequest((r) => ({ file, id: (r?.id ?? 0) + 1 }));
+      setEditorTab('image');
+      openEditor();
+    },
+    [openEditor],
+  );
+
+  // Pasting an image anywhere (outside text fields) loads it.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if ((e.target as HTMLElement | null)?.closest('input, textarea, [contenteditable="true"]')) return;
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+      const file = item?.getAsFile();
+      if (file) {
+        e.preventDefault();
+        requestImage(file);
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [requestImage]);
+
+  const onStageDrop = (e: DragEvent) => {
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    e.preventDefault();
+    requestImage(file);
+  };
+
   /** Apply the editor's drawing to the animation. */
   const applyDrawing = useCallback(
     (close: boolean) => {
@@ -202,6 +237,18 @@ export default function App() {
       analyze(d.points, id, d.mode);
     },
     [analyze, pushDrawing, updateSettings],
+  );
+
+  /** The contour chosen in the image tab becomes the drawing and is analysed like any hand-drawn stroke. */
+  const applyImagePath = useCallback(
+    (points: Vec2[]) => {
+      pushDrawing({ points, source: 'image', mode: drawing.mode });
+      if (analyze(points, 'image', drawing.mode)) {
+        setNotice(null);
+        closeEditor();
+      }
+    },
+    [analyze, closeEditor, drawing.mode, pushDrawing],
   );
 
   const onStrokeEnd = useCallback(
@@ -248,7 +295,9 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.closest('input, textarea, select, [contenteditable="true"]') || (e.key === ' ' && target.closest('button, summary')))) return;
-      if (e.key === ' ' && !editorOpen) {
+      if (e.key === 'Escape' && sidebarOpen && !editorOpen && !isDesktop()) {
+        setSidebarOpen(false);
+      } else if (e.key === ' ' && !editorOpen) {
         e.preventDefault();
         player.toggle();
       } else if (editorOpen && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -262,7 +311,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [player, undo, redo, editorOpen]);
+  }, [player, undo, redo, editorOpen, sidebarOpen]);
 
   const scene = useMemo(
     (): SceneData => ({
@@ -294,6 +343,8 @@ export default function App() {
         analysisId: analyzed.id,
         pending,
         editorOpen,
+        sidebarOpen,
+        editorTab,
         drawingMode: drawing.mode,
         rmse: analysis?.rmse ?? null,
         relativeRmse: analysis ? analysis.rmse / analysis.scale : null,
@@ -304,7 +355,7 @@ export default function App() {
         // ẑ(t) straight from the math module, to compare with the tip drawn on screen.
         tipWorld: analysis ? chainTip(analysis.chain, player.time) : null,
       })),
-    [player, settings, analyzed, pending, editorOpen, drawing, analysis, selectedK],
+    [player, settings, analyzed, pending, editorOpen, sidebarOpen, editorTab, drawing, analysis, selectedK],
   );
 
   const exportPng = async (kind: ExportKind) => {
@@ -352,12 +403,6 @@ export default function App() {
     player.play();
   };
 
-  const showLearn = () => {
-    setTab('learn');
-    setAnalysisOpen(true);
-    setTimeout(() => analysisRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' }), 0);
-  };
-
   const selectedCoefficient = analysis && selectedK !== null ? analysis.spectrum.coefficients[analysis.spectrum.indexOf(selectedK)] : null;
   const rel = analysis ? (analysis.rmse / analysis.scale) * 100 : 0;
 
@@ -371,14 +416,29 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-dvh">
+    <div className="h-dvh overflow-hidden">
       {/* The page behind the modal drawer is inert: no focus, no clicks, hidden from assistive tech. */}
-      <div inert={editorOpen}>
-        <Header editorOpen={editorOpen} pending={dirty} onEdit={openEditor} onExport={exportPng} onSave={saveProject} onLoad={loadProject} onHelp={showLearn} />
+      <div inert={editorOpen} className="flex h-dvh flex-col">
+        <Header
+          editorOpen={editorOpen}
+          pending={dirty}
+          onEdit={openEditor}
+          onExport={exportPng}
+          onSave={saveProject}
+          onLoad={loadProject}
+          onImage={requestImage}
+          sidebarOpen={sidebarOpen}
+          onSidebarToggle={toggleSidebar}
+        />
 
-        <main>
-          <section aria-label="푸리에 시각화" className="mx-auto flex min-h-[calc(100dvh-3.5rem)] w-full max-w-[1920px] flex-col gap-2 px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
-            <div className="relative min-h-[300px] flex-1 rounded-xl border border-line bg-white" data-testid="stage">
+        <main className="flex min-h-0 flex-1">
+          <section
+            aria-label="푸리에 시각화"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-2 sm:p-3"
+            onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
+            onDrop={onStageDrop}
+          >
+            <div className="relative min-h-0 flex-1 rounded-xl border border-line bg-white" data-testid="stage">
               {analysis ? (
                 <Visualizer
                   ref={vizRef}
@@ -421,94 +481,32 @@ export default function App() {
               )}
             </div>
 
-            <ControlsDock
-              player={player}
-              settings={settings}
-              onSpeed={(speed) => updateSettings({ speed })}
-              onLoop={(loop) => updateSettings({ loop })}
-              onCirclePreview={previewCircles}
-              onCircleCommit={commitCircles}
-              onSelectionMode={changeSelectionMode}
-              onDisplay={updateDisplay}
-            />
+            {/* Phones and tablets: the sidebar is an overlay, so the essentials stay one tap away. */}
+            <MobileBar player={player} onToggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} sampleCount={settings.sampleCount} />
           </section>
 
-          <div className="mx-auto w-full max-w-[1920px] space-y-3 px-3 pb-6 sm:px-4">
-            <Panel ref={analysisRef} className="scroll-mt-3" aria-label="수학적 분석">
-              <button
-                type="button"
-                aria-expanded={analysisOpen}
-                aria-controls="analysis-body"
-                data-testid="analysis-toggle"
-                onClick={() => setAnalysisOpen((o) => !o)}
-                className="flex min-h-14 w-full items-center justify-between gap-3 rounded-2xl px-4 text-left"
-              >
-                <span className="text-sm font-semibold text-ink">
-                  수학적 분석 {analysisOpen ? '접기' : '열기'}
-                  <span className="ml-2 hidden text-xs font-normal text-muted sm:inline">주파수 스펙트럼 · 원 개수와 오차 · 수학 원리</span>
-                </span>
-                <ChevronIcon className={cx('shrink-0 text-slate-400 transition-transform', analysisOpen && 'rotate-180')} />
-              </button>
-              {analysisOpen && analysis && (
-                <div id="analysis-body" className="border-t border-line p-4">
-                  <div className="mb-4 w-full sm:max-w-md">
-                    <Segmented<Tab>
-                      label="분석 보기"
-                      value={tab}
-                      onChange={setTab}
-                      options={[
-                        { value: 'spectrum', label: '주파수 스펙트럼' },
-                        { value: 'error', label: '원 개수와 오차' },
-                        { value: 'learn', label: '수학 원리' },
-                      ]}
-                    />
-                  </div>
-                  <div className={cx(tab !== 'learn' && 'min-h-[20rem]')}>
-                    {tab === 'spectrum' && (
-                      <SpectrumChart spectrum={analysis.spectrum} used={chartUsed ?? analysis.selection.frequencies} selectedK={selectedK} onSelect={setSelectedK} />
-                    )}
-                    {tab === 'error' && <ErrorChart errors={analysis.errors} scale={analysis.scale} circleCount={chartCircles} mode={chartMode} />}
-                    {tab === 'learn' && (
-                      <LearnPanel
-                        n={settings.sampleCount}
-                        k={settings.circleCount}
-                        rmse={analysis.rmse}
-                        scale={analysis.scale}
-                        largest={analysis.ranked.amplitude.slice(0, 2)}
-                        mode={settings.pathMode}
-                        endGap={analysis.prepared.endGap}
-                        onTry={(action) => {
-                          if (action === 'one') commitCircles(1);
-                          else if (action === 'many') commitCircles(100);
-                          else if (action === 'select') setSelectedK(analysis.ranked.amplitude[0]?.k ?? null);
-                          else if (action === 'open') loadPreset('spiral', { pathMode: 'open', circleCount: 20, selectionMode: 'frequency' });
-                        }}
-                      />
-                    )}
-                  </div>
-                </div>
-              )}
-            </Panel>
-
-            <Panel className="px-4 py-3">
-              <SettingsPanel
-                settings={settings}
-                open={settingsOpen}
-                onOpenChange={setSettingsOpen}
-                onSampleCount={changeSampleCount}
-                onChainOrder={(chainOrder) => updateSettings({ chainOrder })}
-                onDisplay={updateDisplay}
-                onReset={() => setSettings((s) => ({ ...DEFAULT_SETTINGS, pathMode: s.pathMode }))}
-              />
-            </Panel>
-          </div>
-
-          <footer className="mx-auto max-w-[1920px] px-4 pb-8 text-xs text-muted">
-            FourierLab · 모든 계산은 브라우저에서 이루어집니다 ·{' '}
-            <a className="underline underline-offset-2 hover:text-ink" href="https://github.com/oyueo-mm/FourierLab">
-              GitHub
-            </a>
-          </footer>
+          <Sidebar
+            open={sidebarOpen}
+            onClose={closeSidebar}
+            player={player}
+            settings={settings}
+            analysis={analysis}
+            selectedK={selectedK}
+            onSelectK={setSelectedK}
+            onSpeed={(speed) => updateSettings({ speed })}
+            onLoop={(loop) => updateSettings({ loop })}
+            onCirclePreview={previewCircles}
+            onCircleCommit={commitCircles}
+            onSelectionMode={changeSelectionMode}
+            onDisplay={updateDisplay}
+            onSampleCount={changeSampleCount}
+            onChainOrder={(chainOrder) => updateSettings({ chainOrder })}
+            onResetSettings={() => setSettings((s) => ({ ...DEFAULT_SETTINGS, pathMode: s.pathMode }))}
+            advancedOpen={advancedOpen}
+            onAdvancedOpen={setAdvancedOpen}
+            analysisOpen={analysisOpen}
+            onAnalysisOpen={setAnalysisOpen}
+          />
         </main>
       </div>
 
@@ -520,6 +518,10 @@ export default function App() {
         source={drawing.source}
         mode={drawing.mode}
         pending={pending}
+        tab={editorTab}
+        onTab={setEditorTab}
+        imageRequest={imageRequest}
+        onImageApply={applyImagePath}
         notice={notice}
         canUndo={history.index > 0}
         canRedo={history.index < history.entries.length - 1}
@@ -540,6 +542,50 @@ export default function App() {
       />
 
       <Toast toast={toast} onDismiss={dismissToast} />
+    </div>
+  );
+}
+
+/** Compact transport under the canvas on screens where the sidebar is an overlay. */
+function MobileBar({ player, onToggleSidebar, sidebarOpen, sampleCount }: { player: Player; onToggleSidebar: () => void; sidebarOpen: boolean; sampleCount: number }) {
+  const { playing } = useSyncExternalStore(player.subscribe, player.getState);
+  const step = 1 / sampleCount;
+  return (
+    <div className="flex shrink-0 items-center justify-between gap-2 lg:hidden" role="group" aria-label="재생 컨트롤" data-testid="mobile-bar">
+      <IconButton
+        large
+        label="처음부터 다시 재생"
+        onClick={() => {
+          player.restart();
+          player.play();
+        }}
+      >
+        <ReplayIcon />
+      </IconButton>
+      <IconButton large label="한 단계 뒤로" onClick={() => player.step(-step)}>
+        <StepBackIcon />
+      </IconButton>
+      <button
+        type="button"
+        data-testid="mobile-play-toggle"
+        aria-label={playing ? '일시정지' : '재생'}
+        onClick={() => player.toggle()}
+        className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent text-white shadow-sm hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      >
+        {playing ? <PauseIcon size={24} /> : <PlayIcon size={24} />}
+      </button>
+      <IconButton large label="한 단계 진행" onClick={() => player.step(step)}>
+        <StepForwardIcon />
+      </IconButton>
+      <Button
+        className={cx('h-11', sidebarOpen && 'border-accent/40 bg-accent-soft text-accent')}
+        onClick={onToggleSidebar}
+        aria-expanded={sidebarOpen}
+        aria-controls="sidebar"
+        data-testid="mobile-settings"
+      >
+        설정
+      </Button>
     </div>
   );
 }

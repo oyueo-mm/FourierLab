@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ExportKind } from '../render/export';
-import { DownloadIcon, HelpIcon, MoreIcon, PencilIcon, SaveIcon, UploadIcon } from './icons';
+import { ACCEPT_ATTR } from '../image/load';
+import { DownloadIcon, ImageIcon, MoreIcon, PencilIcon, SaveIcon, SidebarIcon, UploadIcon } from './icons';
 import { Button, cx } from './ui';
 
 interface Props {
@@ -11,7 +12,9 @@ interface Props {
   onExport: (kind: ExportKind) => void;
   onSave: () => void;
   onLoad: (file: File) => void;
-  onHelp: () => void;
+  onImage: (file: File) => void;
+  sidebarOpen: boolean;
+  onSidebarToggle: () => void;
 }
 
 interface MenuItem {
@@ -64,8 +67,9 @@ function Menu({ trigger, items, align = 'right', testId }: { trigger: (props: { 
   );
 }
 
-export function Header({ editorOpen, pending, onEdit, onExport, onSave, onLoad, onHelp }: Props) {
+export function Header({ editorOpen, pending, onEdit, onExport, onSave, onLoad, onImage, sidebarOpen, onSidebarToggle }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
 
   const exportItems: MenuItem[] = [
     { key: 'export-current', label: '현재 화면', hint: '회전하는 원과 궤적 포함', onSelect: () => onExport('current') },
@@ -76,17 +80,15 @@ export function Header({ editorOpen, pending, onEdit, onExport, onSave, onLoad, 
     ...exportItems.map((x) => ({ ...x, key: `m-${x.key}`, label: `PNG · ${x.label}` })),
     { key: 'm-save-project', label: '프로젝트 저장 (JSON)', onSelect: onSave },
     { key: 'm-load-project', label: '프로젝트 불러오기', onSelect: () => fileRef.current?.click() },
-    { key: 'm-help', label: '수학 원리', hint: '설명과 분석 보기', onSelect: onHelp },
   ];
 
   return (
-    <header className="h-14 border-b border-line bg-white">
+    <header className="h-14 shrink-0 border-b border-line bg-white">
       <div className="mx-auto flex h-full max-w-[1920px] items-center gap-2 px-3 sm:px-4">
         <a href="./" className="flex min-w-0 items-center gap-2.5" aria-label="FourierLab 홈">
           <img src={`${import.meta.env.BASE_URL}logo.svg`} alt="" width={34} height={34} className="shrink-0 rounded-lg" />
           <div className="min-w-0">
-            <h1 className="truncate text-lg leading-tight font-bold tracking-tight text-ink">FourierLab</h1>
-            <p className="hidden text-xs text-muted xl:block">그림을 회전하는 원으로 다시 그리는 푸리에 급수 실험실</p>
+            <h1 className="hidden truncate text-lg leading-tight font-bold tracking-tight text-ink sm:block">FourierLab</h1>
           </div>
         </a>
 
@@ -101,10 +103,16 @@ export function Header({ editorOpen, pending, onEdit, onExport, onSave, onLoad, 
             onClick={onEdit}
           >
             <PencilIcon size={16} />
-            그림 편집
+            <span className="hidden sm:inline">그림 편집</span>
+            <span className="sm:hidden">편집</span>
             {pending && !editorOpen && (
               <span data-testid="pending-dot" aria-label="적용하지 않은 편집 내용 있음" className="absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-white bg-amber-400" />
             )}
+          </Button>
+
+          <Button onClick={() => imageRef.current?.click()} data-testid="header-image" aria-label="이미지 업로드" className="h-11 sm:h-10">
+            <ImageIcon size={16} />
+            <span className="hidden lg:inline">이미지 업로드</span>
           </Button>
 
           {/* ≥ md: individual buttons */}
@@ -127,10 +135,6 @@ export function Header({ editorOpen, pending, onEdit, onExport, onSave, onLoad, 
               <UploadIcon size={16} />
               <span className="hidden lg:inline">불러오기</span>
             </Button>
-            <Button variant="ghost" onClick={onHelp} aria-label="수학 원리 설명 보기" className="h-10" data-testid="help">
-              <HelpIcon size={18} />
-              <span className="hidden lg:inline">원리</span>
-            </Button>
           </div>
 
           {/* < md: one overflow menu */}
@@ -142,7 +146,7 @@ export function Header({ editorOpen, pending, onEdit, onExport, onSave, onLoad, 
                 <button
                   type="button"
                   onClick={toggle}
-                  aria-label="더보기: 저장, 불러오기, PNG, 수학 원리"
+                  aria-label="더보기: 저장, 불러오기, PNG"
                   aria-expanded={open}
                   aria-haspopup="menu"
                   data-testid="more-menu"
@@ -154,6 +158,33 @@ export function Header({ editorOpen, pending, onEdit, onExport, onSave, onLoad, 
             />
           </div>
 
+          <button
+            type="button"
+            onClick={onSidebarToggle}
+            aria-label={sidebarOpen ? '설정 사이드바 닫기' : '설정 사이드바 열기'}
+            aria-expanded={sidebarOpen}
+            aria-controls="sidebar"
+            data-testid="sidebar-toggle"
+            className={cx(
+              'inline-flex h-11 w-11 items-center justify-center rounded-lg border transition-colors sm:h-10 sm:w-10',
+              sidebarOpen ? 'border-accent/40 bg-accent-soft text-accent' : 'border-line bg-white text-slate-600 hover:bg-slate-50',
+            )}
+          >
+            <SidebarIcon size={18} />
+          </button>
+
+          <input
+            ref={imageRef}
+            type="file"
+            accept={ACCEPT_ATTR}
+            className="hidden"
+            data-testid="header-image-input"
+            onChange={(e) => {
+              const f = e.currentTarget.files?.[0];
+              e.currentTarget.value = '';
+              if (f) onImage(f);
+            }}
+          />
           <input
             ref={fileRef}
             type="file"

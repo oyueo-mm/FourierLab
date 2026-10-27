@@ -4,10 +4,11 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { Player } from '../core/player';
 import { MAX_SPEED, MIN_SPEED, periodSeconds } from '../core/settings';
-import { PauseIcon, PlayIcon, ReplayIcon, SkipStartIcon, StepBackIcon, StepForwardIcon } from './icons';
+import { PauseIcon, PlayIcon, RepeatIcon, ReplayIcon, SkipStartIcon, StepBackIcon, StepForwardIcon } from './icons';
 import { IconButton, Slider, cx } from './ui';
 
 const TIMELINE_STEPS = 10000;
+const QUICK_SPEEDS = [0.5, 1, 2, 4];
 
 // Speed slider is logarithmic so 0.1×–1× and 1×–5× both get usable travel.
 const speedToSlider = (s: number) => Math.log(s / MIN_SPEED) / Math.log(MAX_SPEED / MIN_SPEED);
@@ -30,7 +31,7 @@ export function TransportRow({
   const { playing } = useSyncExternalStore(player.subscribe, player.getState);
   const step = 1 / sampleCount;
   return (
-    <div className={cx('flex items-center justify-between gap-1.5 sm:justify-start sm:gap-2', className)} role="group" aria-label="재생 컨트롤">
+    <div className={cx('flex items-center justify-between gap-1', className)} role="group" aria-label="재생 컨트롤">
       <IconButton
         large
         label="처음으로 이동"
@@ -67,19 +68,15 @@ export function TransportRow({
       >
         <ReplayIcon />
       </IconButton>
-      <button
-        type="button"
+      <IconButton
+        large
         data-testid="loop-toggle"
-        aria-pressed={loop}
-        aria-label={loop ? '반복 재생 중 (누르면 한 번만 재생)' : '한 번만 재생 (누르면 반복 재생)'}
+        active={loop}
+        label={loop ? '반복 재생 중 (누르면 한 번만 재생)' : '한 번만 재생 (누르면 반복 재생)'}
         onClick={() => onLoop(!loop)}
-        className={cx(
-          'h-11 shrink-0 rounded-lg border px-3 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
-          loop ? 'border-accent/40 bg-accent-soft text-accent' : 'border-line bg-white text-slate-600',
-        )}
       >
-        {loop ? '반복' : '한 번'}
-      </button>
+        <RepeatIcon />
+      </IconButton>
     </div>
   );
 }
@@ -154,6 +151,23 @@ export function SpeedRow({ speed, onSpeed }: { speed: number; onSpeed: (s: numbe
         >
           {speed.toFixed(2)}× · {period.toFixed(1)}초/바퀴
         </button>
+      </div>
+      <div className="flex gap-1" role="group" aria-label="빠른 배속">
+        {QUICK_SPEEDS.map((q) => (
+          <button
+            key={q}
+            type="button"
+            onClick={() => onSpeed(q)}
+            aria-pressed={Math.abs(speed - q) < 0.005}
+            data-testid={`speed-${q}`}
+            className={cx(
+              'h-7 flex-1 rounded-md font-mono text-xs tabular transition-colors',
+              Math.abs(speed - q) < 0.005 ? 'bg-accent text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+            )}
+          >
+            {q}×
+          </button>
+        ))}
       </div>
       <Slider
         label="재생 속도"

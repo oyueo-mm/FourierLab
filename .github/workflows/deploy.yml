@@ -64,6 +64,11 @@ jobs:
         env:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
 
+      - name: Image upload test
+        run: npm run e2e:image
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+
       - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v5

@@ -11,8 +11,6 @@ export interface Preset {
   name: string;
   /** Path mode applied when the preset is loaded. */
   mode: PathMode;
-  /** Shown under the canvas when the preset is selected. */
-  note?: string;
   points: Vec2[];
 }
 
@@ -56,21 +54,18 @@ export const PRESETS: readonly Preset[] = [
     id: 'circle',
     name: '원',
     mode: 'closed',
-    note: '원은 k = +1 성분 하나만으로 거의 완벽하게 표현됩니다. 원 개수를 1로 줄여 확인해 보세요.',
     points: parametric(360, (u) => [0.7 * Math.cos(TAU * u), 0.7 * Math.sin(TAU * u)]),
   },
   {
     id: 'ellipse',
     name: '타원',
     mode: 'closed',
-    note: '타원의 주된 모양은 서로 반대로 도는 두 원(k = +1, k = −1)이 만듭니다. 호 길이 기준으로 다시 샘플링하기 때문에 작은 고차 성분도 함께 나타납니다.',
     points: parametric(360, (u) => [0.8 * Math.cos(TAU * u), 0.45 * Math.sin(TAU * u)]),
   },
   {
     id: 'square',
     name: '정사각형',
     mode: 'closed',
-    note: '날카로운 모서리를 표현하려면 고주파 성분이 많이 필요합니다.',
     points: polygon([
       [-0.62, -0.62],
       [0.62, -0.62],
@@ -102,7 +97,6 @@ export const PRESETS: readonly Preset[] = [
     id: 'rose',
     name: '장미 곡선',
     mode: 'closed',
-    note: '꽃잎 세 장의 장미 곡선 r = cos 3θ. 원점을 여러 번 지나는 곡선도 회전하는 원으로 그릴 수 있습니다.',
     points: parametric(900, (u) => {
       const t = Math.PI * u;
       const r = 0.8 * Math.cos(3 * t);
@@ -113,7 +107,6 @@ export const PRESETS: readonly Preset[] = [
     id: 'spiral',
     name: '나선',
     mode: 'closed',
-    note: '나선은 시작점과 끝점이 떨어져 있습니다. 점선은 한 주기가 끝나고 시작점으로 돌아가는 구간입니다. 닫힌 경로에서는 직선으로 이어지고, 열린 경로에서는 순간 이동(불연속)이 됩니다. 경로 처리 방식을 바꿔 비교해 보세요.',
     points: parametric(
       900,
       (u) => {
